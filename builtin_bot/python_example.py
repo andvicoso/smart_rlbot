@@ -3,9 +3,6 @@ import math
 from rlbot.agents.base_agent import BaseAgent, SimpleControllerState
 from rlbot.utils.structures.game_data_struct import GameTickPacket
 
-import websocket
-import json
-
 
 class PythonExample(BaseAgent):
 
@@ -13,24 +10,7 @@ class PythonExample(BaseAgent):
         #This runs once before the bot starts up
         self.controller_state = SimpleControllerState()
 
-        self.ws = websocket.create_connection("ws://localhost:8080/gamedata-collect")
-
     def get_output(self, packet: GameTickPacket) -> SimpleControllerState:
-
-        data = {
-            'game_cars': [getdict(packet.game_cars[i]) for i in range(packet.num_cars)],
-            'num_cars': packet.num_cars,
-            'game_boosts': [getdict(packet.game_boosts[i]) for i in range(packet.num_cars)],
-            'num_boost': packet.num_boost,
-            'game_ball': getdict(packet.game_ball),
-            'game_info': getdict(packet.game_info)
-        }
-
-        # send data
-        self.ws.send(json.dumps(data))
-
-        """ default action = just follow the ball """
-
         ball_location = Vector2(packet.game_ball.physics.location.x, packet.game_ball.physics.location.y)
 
         my_car = packet.game_cars[self.index]
@@ -49,25 +29,11 @@ class PythonExample(BaseAgent):
         self.controller_state.throttle = 1.0
         self.controller_state.steer = turn
 
+        if my_car.boost >= 10:
+            self.controller_state.boost = True
+        else:
+            self.controller_state.boost = False
         return self.controller_state
-
-
-def getdict(struct):
-    result = {}
-    for field, _ in struct._fields_:
-         value = getattr(struct, field)
-         # if the type is not a primitive and it evaluates to False ...
-         if (type(value) not in [int, float, bool]) and not bool(value):
-             # it's a null pointer
-             value = None
-         elif hasattr(value, "_length_") and hasattr(value, "_type_"):
-             # Probably an array
-             value = list(value)
-         elif hasattr(value, "_fields_"):
-             # Probably another struct
-             value = getdict(value)
-         result[field] = value
-    return result
 
 
 class Vector2:
