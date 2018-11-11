@@ -11,6 +11,8 @@ from pprint import pprint
 
 class PythonExample(BaseAgent):
 
+    controller_states = {}
+
     def initialize_agent(self):
         #This runs once before the bot starts up
         self.controller_state = SimpleControllerState()
@@ -34,7 +36,15 @@ class PythonExample(BaseAgent):
             'game_info': getdict(packet.game_info)
         }
 
-        packet_data['controller_state'] = self.controller_state.__dict__
+        if len(PythonExample.controller_states) == packet.num_cars:
+            controller_state_data = {}
+            controller_state_data['seconds_elapsed'] = packet.game_info.seconds_elapsed
+            controller_state_data['states'] = PythonExample.controller_states
+            self.db.controller_states.insert_one(controller_state_data)
+            PythonExample.controller_states = {}
+        else:
+            PythonExample.controller_states[self.index] = self.controller_state.__dict__
+
 
         self.store_data(packet_data)
 
@@ -91,27 +101,40 @@ class PythonExample(BaseAgent):
         self.controller_state.steer = turn     
 
     def think(self, packet, packet_data):
-        self.make_default_action(packet)
+        #self.make_default_action(packet)
         # pick 10 random points
-        prev_data_cursor = self.db.packets.aggregate([{ '$sample': { 'size': 10 } }])
-        prev_datas = []
-        similarities = []
+        prev_data_cursor = self.db.packets.aggregate([{ '$sample': { 'size': 20 } }])
+        most_similar_prev_data = None
+        min_packet_difference = 1000000000000000
         for prev_data in prev_data_cursor:
-            prev_datas.append(prev_data)
-            similarities.append(similarity(packet_data, prev_data))
+            if most_similar_prev_data is None:
+                most_similar_prev_data = prev_data
+            current = packet_difference(packet_data, prev_data)
+            if current < min_packet_difference:
+                min_packet_difference = current
+                most_similar_prev_data = prev_data
 
-        i = similarities.index(min(similarities))
-        most_similar_state = prev_datas[i]['controller_state']
-        self.controller_state.throttle = most_similar_state['throttle']
-        self.controller_state.steer = most_similar_state['steer']
-        self.controller_state.pitch = most_similar_state['pitch']
-        self.controller_state.yaw = most_similar_state['yaw']
-        self.controller_state.roll = most_similar_state['roll']
-        self.controller_state.jump = most_similar_state['jump']
-        self.controller_state.boost = most_similar_state['boost']
-        self.controller_state.handbrake = most_similar_state['handbrake']
+        #pprint(most_similar_prev_data['game_info']['seconds_elapsed'])
 
-def similarity(curr_packet_data, prev_packet_data):
+        
+
+        most_similar_state_data = self.db.controller_states.find_one({
+            'seconds_elapsed': {'$gt': most_similar_prev_data['game_info']['seconds_elapsed']-2, '$lt': most_similar_prev_data['game_info']['seconds_elapsed']}
+        })
+        if most_similar_state_data is not None:
+            who = 0
+            pprint(most_similar_state_data)
+            print("{} controller state updated based on {}".format(self.index, who))
+            self.controller_state.throttle = most_similar_state_data['states'][who]['throttle']
+            self.controller_state.steer = most_similar_state_data['states'][who]['steer']
+            self.controller_state.pitch = most_similar_state_data['states'][who]['pitch']
+            self.controller_state.yaw = most_similar_state_data['states'][who]['yaw']
+            self.controller_state.roll = most_similar_state_data['states'][who]['roll']
+            self.controller_state.jump = most_similar_state_data['states'][who]['jump']
+            self.controller_state.boost = most_similar_state_data['states'][who]['boost']
+            self.controller_state.handbrake = most_similar_state_data['states'][who]['handbrake']
+
+def packet_difference(curr_packet_data, prev_packet_data):
     res = 0
     #print(curr_packet_data['num_cars'], prev_packet_data['num_cars'])
     for i in range(curr_packet_data['num_cars']):
