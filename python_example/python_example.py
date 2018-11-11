@@ -46,7 +46,7 @@ class PythonExample(BaseAgent):
         else:
             turn = 1.0
 
-        self.controller_state.throttle = 1.0
+        self.controller_state.throttle = 0.0
         self.controller_state.steer = turn
 
         return self.controller_state
