@@ -1,28 +1,19 @@
 import math
 import json
 import asyncio
-from pymongo import MongoClient
+import numpy as np
+import random
+from pprint import pprint
 
 from rlbot.agents.base_agent import BaseAgent, SimpleControllerState
 from rlbot.utils.structures.game_data_struct import GameTickPacket
 
-from pprint import pprint
-
-import multiprocessing as mp
-
-import random
 
 class PythonExample(BaseAgent):
 
     def initialize_agent(self):
         #This runs once before the bot starts up
         self.controller_state = SimpleControllerState()
-
-        self.client = MongoClient('10.140.11.149', 36281)
-        self.db = self.client['rl_game3']
-
-        self.previous_score = -1
-        self.previous_event_time = 0
 
         self.tick_count = 0
 
@@ -35,13 +26,13 @@ class PythonExample(BaseAgent):
         #self.renderer.end_rendering()
 
         """ action by model """
-        if self.tick_count == 60:
+        if self.tick_count == 10:
             self.tick_count = 0
             #p = TrainProcess(packet, self.index)
             #p.start()
             self.think(packet)
             
-            self.store_data(packet)
+            #self.store_data(packet)
         else:
             self.tick_count += 1
 
@@ -62,8 +53,8 @@ class PythonExample(BaseAgent):
         self.db.packets.insert_one(packet_data)
         """
 
-        self.prev_packets.append(packet)
-        self.prev_controls.append(self.controller_state.__dict__)
+        
+        
 
         if self.previous_score < 0:
             self.previous_score = packet.game_cars[self.index].score_info.score
@@ -96,125 +87,69 @@ class PythonExample(BaseAgent):
             self.prev_packets = []
             self.prev_controls = []
 
+        self.prev_packets.append(packet)
+        self.prev_controls.append(self.controller_state.__dict__)
+
                  
 
     def think(self, packet):
-        random_packets = self.db.custom_packets.aggregate([{ '$sample': { 'size': 40 } }])
-        #random_packets = self.db.custom_packets.find({'seconds_elapsed':{'$gt': packet.game_info.seconds_elapsed-200}})
-
-        if random_packets is None:
-            self.default_action(packet)
-        else:
-            best_packet_data = None
-            smallest_difference = 100000000000000
-            for packet_data in random_packets:
-                #pprint(packet_data)
-                if random.uniform(0,1) > 0.5:
-                    current_difference = packet_loss(packet, self.controller_state, self.index, packet_data)
-                    if current_difference < smallest_difference:
-                        smallest_difference = current_difference
-                        best_packet_data = packet_data
-            
-            if best_packet_data is not None and random.uniform(0,1)>0.5: # take random with 5% possibility
-                self.controller_state.throttle = best_packet_data['control_state']['throttle']
-                self.controller_state.steer = best_packet_data['control_state']['steer']
-                self.controller_state.pitch = best_packet_data['control_state']['pitch']
-                self.controller_state.yaw = best_packet_data['control_state']['yaw']
-                self.controller_state.roll = best_packet_data['control_state']['roll']
-                self.controller_state.jump = best_packet_data['control_state']['jump']
-                self.controller_state.boost = best_packet_data['control_state']['boost']
-                self.controller_state.handbrake = best_packet_data['control_state']['handbrake']
-                print("player {} copies action by player {} at {} (packet_loss={})".format(self.index, best_packet_data['who_got_score'], best_packet_data['seconds_elapsed'], smallest_difference))
-
-            else:
-                self.default_action(packet)
+        self.default_action(packet)
         
-        
-
 
     def default_action(self, packet):
         """
-        self.controller_state.throttle = random.uniform(-1, 1)
-        self.controller_state.steer = random.uniform(-1, 1)
-        self.controller_state.pitch = random.uniform(-1, 1)
-        self.controller_state.yaw = random.uniform(-1, 1)
-        self.controller_state.roll = random.uniform(-1, 1)
+        # completely random
+        self.controller_state.throttle = random.randint(-1, 1)
+        self.controller_state.steer = random.randint(-1, 1)
+        self.controller_state.pitch = random.randint(-1, 1)
+        self.controller_state.yaw = random.randint(-1, 1)
+        self.controller_state.roll = random.randint(-1, 1)
         self.controller_state.jump = random.getrandbits(1)
         self.controller_state.boost = random.getrandbits(1)
         self.controller_state.handbrake = random.getrandbits(1)
         """
 
-        print("player {} takes default action".format(self.index))
+        car = packet.game_cars[self.index]
 
-        ball_location = Vector2(packet.game_ball.physics.location.x, packet.game_ball.physics.location.y)
+        #if self.index == 1:
+        #    print(car.physics.rotation.pitch)
 
-        my_car = packet.game_cars[self.index]
-        car_location = Vector2(my_car.physics.location.x, my_car.physics.location.y)
-        car_direction = get_car_facing_vector(my_car)
-        car_to_ball = ball_location - car_location
+        car_location = np.array((car.physics.location.x, car.physics.location.y))
+        ball_location = np.array((packet.game_ball.physics.location.x, packet.game_ball.physics.location.y))
+        car_to_ball_distance = np.subtract(ball_location, car_location)
+        car_to_ball_angle = np.arctan(car_to_ball_distance[1]/car_to_ball_distance[0])
+        if car_to_ball_distance[0] < 0:
+            if car_to_ball_distance[1] > 0:
+                car_to_ball_angle = np.pi + car_to_ball_angle
+            else:
+                car_to_ball_angle = -1*(np.pi - car_to_ball_angle)
 
-        steer_correction_radians = car_direction.correction_to(car_to_ball)
+        # make it normal poler coordinate
+        car_angle = car.physics.rotation.yaw
 
-        if steer_correction_radians > 0:
-            # Positive radians in the unit circle is a turn to the left.
-            turn = -0.5  # Negative value for a turn to the left.
-        else:
-            turn = 0.5
+        angle_difference = np.subtract(car_to_ball_angle, car_angle)
 
-        self.controller_state.pitch = random.uniform(-1, 1)
-        self.controller_state.yaw = random.uniform(-1, 1)
-        self.controller_state.roll = random.uniform(-1, 1)
-        self.controller_state.jump = random.getrandbits(1)
-        self.controller_state.boost = random.getrandbits(1)
-        self.controller_state.handbrake = random.getrandbits(1)
+        if np.absolute(angle_difference) > np.pi:
+            if angle_difference < 0:
+                angle_difference += 2 * np.pi
+            else:
+                angle_difference -= 2 * np.pi
 
-        self.controller_state.throttle = 1.0
-        self.controller_state.steer = turn
-
-def packet_loss(curr_packet, control_state, i, prev_packet_data):
-    res = 0
-    #print(curr_packet_data['num_cars'], prev_packet_data['num_cars'])
-    #for i in range(4):
-    res += math.pow(curr_packet.game_cars[i].physics.location.x-prev_packet_data['game_cars'][prev_packet_data['who_got_score']]['physics']['location']['x'], 2)
-    res += math.pow(curr_packet.game_cars[i].physics.location.y-prev_packet_data['game_cars'][prev_packet_data['who_got_score']]['physics']['location']['y'], 2)
-    res += math.pow(curr_packet.game_cars[i].physics.location.z-prev_packet_data['game_cars'][prev_packet_data['who_got_score']]['physics']['location']['z'], 2)
-    res += math.pow(curr_packet.game_cars[i].physics.rotation.pitch-prev_packet_data['game_cars'][prev_packet_data['who_got_score']]['physics']['rotation']['pitch'], 2)
-    res += math.pow(curr_packet.game_cars[i].physics.rotation.yaw-prev_packet_data['game_cars'][prev_packet_data['who_got_score']]['physics']['rotation']['yaw'], 2)
-    res += math.pow(curr_packet.game_cars[i].physics.rotation.roll-prev_packet_data['game_cars'][prev_packet_data['who_got_score']]['physics']['rotation']['roll'], 2)
-    res += math.pow(curr_packet.game_cars[i].physics.velocity.x-prev_packet_data['game_cars'][prev_packet_data['who_got_score']]['physics']['velocity']['x'], 2)
-    res += math.pow(curr_packet.game_cars[i].physics.velocity.y-prev_packet_data['game_cars'][prev_packet_data['who_got_score']]['physics']['velocity']['y'], 2)
-    res += math.pow(curr_packet.game_cars[i].physics.velocity.z-prev_packet_data['game_cars'][prev_packet_data['who_got_score']]['physics']['velocity']['z'], 2)
-    res += math.pow(curr_packet.game_cars[i].boost-prev_packet_data['game_cars'][i]['boost'], 2)
+        if self.index == 0:
+            print('car location ', car_location)
+            print('ball location', ball_location)
+            print('car to ball distance', car_to_ball_distance)
+            print('car to ball angle', car_to_ball_angle )
+            print('car angle', car_angle )
+            print('angle difference', angle_difference )
+            print()
+            #print(car.physics.rotation.yaw, ideal_yaw, difference)
 
 
-    res += math.pow(curr_packet.game_ball.physics.location.x-prev_packet_data['game_ball']['physics']['location']['x'], 2)
-    res += math.pow(curr_packet.game_ball.physics.location.y-prev_packet_data['game_ball']['physics']['location']['y'], 2)
-    res += math.pow(curr_packet.game_ball.physics.location.z-prev_packet_data['game_ball']['physics']['location']['z'], 2)
-    res += math.pow(curr_packet.game_ball.physics.rotation.pitch-prev_packet_data['game_ball']['physics']['rotation']['pitch'], 2)
-    res += math.pow(curr_packet.game_ball.physics.rotation.yaw-prev_packet_data['game_ball']['physics']['rotation']['yaw'], 2)
-    res += math.pow(curr_packet.game_ball.physics.rotation.roll-prev_packet_data['game_ball']['physics']['rotation']['roll'], 2)
-    res += math.pow(curr_packet.game_ball.physics.velocity.x-prev_packet_data['game_ball']['physics']['velocity']['x'], 2)
-    res += math.pow(curr_packet.game_ball.physics.velocity.y-prev_packet_data['game_ball']['physics']['velocity']['y'], 2)
-    res += math.pow(curr_packet.game_ball.physics.velocity.z-prev_packet_data['game_ball']['physics']['velocity']['z'], 2)
-    res += 100*math.pow(curr_packet.game_ball.latest_touch.hit_location.x-prev_packet_data['game_ball']['latest_touch']['hit_location']['x'], 2)
-    res += 100*math.pow(curr_packet.game_ball.latest_touch.hit_location.y-prev_packet_data['game_ball']['latest_touch']['hit_location']['y'], 2)
-    res += 100*math.pow(curr_packet.game_ball.latest_touch.hit_location.z-prev_packet_data['game_ball']['latest_touch']['hit_location']['z'], 2)
+        self.controller_state.throttle = 1
+        self.controller_state.steer = 1 if angle_difference > 0 else -1
 
-    # controller state
-    
-    res += 1000*math.pow(control_state.throttle-prev_packet_data['control_state']['throttle'], 2)
-    res += 1000*math.pow(control_state.steer-prev_packet_data['control_state']['steer'], 2)   
-    res += 1000*math.pow(control_state.pitch-prev_packet_data['control_state']['pitch'], 2)   
-    res += 1000*math.pow(control_state.yaw-prev_packet_data['control_state']['yaw'], 2)   
-    res += 1000*math.pow(control_state.roll-prev_packet_data['control_state']['roll'], 2)   
-
-    res += 100 if control_state.jump != prev_packet_data['control_state']['jump'] else 0
-    res += 100 if control_state.boost != prev_packet_data['control_state']['boost'] else 0
-    res += 100 if control_state.handbrake != prev_packet_data['control_state']['handbrake'] else 0
-   
-    
-    return math.sqrt(res)/prev_packet_data['score_change']
-
+        return self.controller_state
 
 def getdict(struct):
     result = {}
@@ -234,39 +169,3 @@ def getdict(struct):
     return result
 
 
-class Vector2:
-    def __init__(self, x=0, y=0):
-        self.x = float(x)
-        self.y = float(y)
-
-    def __add__(self, val):
-        return Vector2(self.x + val.x, self.y + val.y)
-
-    def __sub__(self, val):
-        return Vector2(self.x - val.x, self.y - val.y)
-
-    def correction_to(self, ideal):
-        # The in-game axes are left handed, so use -x
-        current_in_radians = math.atan2(self.y, -self.x)
-        ideal_in_radians = math.atan2(ideal.y, -ideal.x)
-
-        correction = ideal_in_radians - current_in_radians
-
-        # Make sure we go the 'short way'
-        if abs(correction) > math.pi:
-            if correction < 0:
-                correction += 2 * math.pi
-            else:
-                correction -= 2 * math.pi
-
-        return correction
-
-
-def get_car_facing_vector(car):
-    pitch = float(car.physics.rotation.pitch)
-    yaw = float(car.physics.rotation.yaw)
-
-    facing_x = math.cos(pitch) * math.cos(yaw)
-    facing_y = math.cos(pitch) * math.sin(yaw)
-
-    return Vector2(facing_x, facing_y)
